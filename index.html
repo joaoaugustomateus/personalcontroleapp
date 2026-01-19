@@ -4,6 +4,106 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>João Augusto Mateus | Premium Coaching</title>
+    
+    <!-- Firebase SDK (Módulo de Base de Dados na Nuvem) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+
+        // Configuração Global injetada pelo ambiente
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'personal-jam-coach-v25';
+
+        // Estado Global (Inicializado como vazio)
+        window.state = {
+            alunos: [],
+            agenda: [{hora:"07:00", dias:[[],[],[],[],[]]}, {hora:"08:00", dias:[[],[],[],[],[]]}, {hora:"09:00", dias:[[],[],[],[],[]]}],
+            treinos: {},
+            diarios: {},
+            evolucao: {}
+        };
+
+        // Regra 3: Autenticação obrigatória antes de queries
+        const initAuth = async () => {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+        };
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                console.log("Sistema Cloud Conectado:", user.uid);
+                syncData(user.uid);
+            } else {
+                initAuth();
+            }
+        });
+
+        // Sincronização em Tempo Real (Regras 1 e 2)
+        function syncData(userId) {
+            const docRef = doc(db, 'artifacts', appId, 'users', userId, 'config', 'userData');
+            
+            onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    
+                    // CORREÇÃO: Deserializar a agenda se ela vier como string (Regra de Arrays Aninhados)
+                    if (data.agenda && typeof data.agenda === 'string') {
+                        data.agenda = JSON.parse(data.agenda);
+                    }
+                    
+                    window.state = data;
+                    if (!window.state.agenda) window.state.agenda = [];
+                    renderAllTabs();
+                } else {
+                    window.saveToCloud();
+                }
+            }, (error) => console.error("Erro na Sincronização Cloud:", error));
+        }
+
+        // Função de Guardar na Cloud
+        window.saveToCloud = async () => {
+            if (!auth.currentUser) return;
+            const userId = auth.currentUser.uid;
+            const docRef = doc(db, 'artifacts', appId, 'users', userId, 'config', 'userData');
+            
+            try {
+                // CORREÇÃO: Clonar o estado e serializar a agenda para evitar erro de "Nested Arrays"
+                const dataToSave = { ...window.state };
+                if (dataToSave.agenda && Array.isArray(dataToSave.agenda)) {
+                    dataToSave.agenda = JSON.stringify(dataToSave.agenda);
+                }
+
+                await setDoc(docRef, dataToSave);
+                mostrarFeedbackSync();
+            } catch (e) {
+                console.error("Erro ao guardar dados:", e);
+            }
+        };
+
+        function mostrarFeedbackSync() {
+            const el = document.getElementById('cloud-status');
+            if (el) {
+                el.style.opacity = '1';
+                setTimeout(() => el.style.opacity = '0', 2000);
+            }
+        }
+
+        function renderAllTabs() {
+            renderAgenda(); 
+            renderAlunos(); 
+            updateAllSelects();
+            const activeTab = document.querySelector('.tab-content.active')?.id;
+            if(activeTab === 'financeiro') renderFinanceiro();
+        }
+    </script>
+
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
@@ -24,10 +124,6 @@
             overflow-x: hidden;
         }
 
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: var(--bg-dark); }
-        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
-
         .tab-content { display: none; }
         .tab-content.active { display: block; animation: reveal 0.4s ease-out; }
 
@@ -44,7 +140,6 @@
             border-radius: 12px;
             transition: all 0.3s;
         }
-        .nav-link:hover { color: white; background: rgba(255,255,255,0.05); }
         .nav-link.active { color: var(--accent); background: var(--accent-glow); }
 
         .glass-card {
@@ -63,13 +158,11 @@
             outline: none;
             width: 100%;
         }
-        .input-premium:focus { border-color: var(--accent); }
 
         .btn-gradient {
             background: linear-gradient(135deg, #10b981 0%, #059669 100%);
             transition: all 0.3s;
         }
-        .btn-gradient:hover { filter: brightness(1.1); transform: translateY(-1px); }
 
         .aluno-badge {
             padding: 4px 10px;
@@ -80,51 +173,31 @@
             align-items: center;
             gap: 4px;
             cursor: pointer;
-            white-space: nowrap;
             border: 1px solid transparent;
-            transition: all 0.2s;
         }
-        .aluno-badge:hover { filter: brightness(0.9); transform: scale(1.02); }
 
         .ficha-tab {
             padding: 8px 16px;
             border-radius: 10px;
             background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.05);
             cursor: pointer;
             font-weight: 700;
             font-size: 13px;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 8px;
         }
-        .ficha-tab.active {
-            background: var(--accent-glow);
-            color: var(--accent);
-            border-color: var(--accent);
-        }
-
-        .section-title {
-            font-size: 0.65rem;
-            text-transform: uppercase;
-            font-weight: 900;
-            letter-spacing: 0.1em;
-            color: var(--text-secondary);
-            margin-bottom: 1rem;
-            display: block;
-        }
+        .ficha-tab.active { background: var(--accent-glow); color: var(--accent); border: 1px solid var(--accent); }
     </style>
 </head>
 <body class="pb-20">
+
+    <div id="cloud-status" class="fixed top-4 right-4 text-[10px] bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-full border border-emerald-500/20 opacity-0 transition-opacity duration-500 z-[100] font-bold uppercase tracking-tighter">
+        Dados Sincronizados
+    </div>
 
     <header class="border-b border-white/5 sticky top-0 z-50 bg-slate-950/80 backdrop-blur-xl">
         <div class="max-w-7xl mx-auto px-6 h-20 flex justify-between items-center">
             <div class="flex items-center gap-3">
                 <div class="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center border border-emerald-500/20">
-                    <svg class="w-6 h-6 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
+                    <svg class="w-6 h-6 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </div>
                 <h1 class="text-lg font-bold">João Augusto <span class="text-emerald-500">Mateus</span></h1>
             </div>
@@ -160,7 +233,7 @@
             </div>
         </section>
 
-        <!-- ALUNOS (CADASTRO) -->
+        <!-- ALUNOS -->
         <section id="alunos" class="tab-content">
             <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
                 <h2 class="text-3xl font-black">Base de <span class="text-emerald-500">Alunos</span></h2>
@@ -172,131 +245,69 @@
             <div id="alunos-list" class="grid grid-cols-1 gap-4"></div>
         </section>
 
-        <!-- PLANILHAS (TREINOS) -->
+        <!-- PLANILHAS -->
         <section id="treinos" class="tab-content">
             <div class="flex flex-col md:flex-row items-start md:items-center gap-4 mb-8">
                 <h2 class="text-3xl font-black">Planilhas</h2>
                 <select id="treino-aluno-select" onchange="currentFichaIdx=0; loadTreinoAluno()" class="input-premium bg-slate-900 font-bold text-emerald-500 max-w-xs"></select>
-                <button onclick="addNovaFicha()" id="btn-add-ficha" class="hidden text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 px-4 py-2 rounded-lg font-bold border border-emerald-500/20 transition-all">+ Nova Ficha (B, C...)</button>
+                <button onclick="addNovaFicha()" id="btn-add-ficha" class="hidden text-xs bg-emerald-500/10 text-emerald-500 px-4 py-2 rounded-lg font-bold border border-emerald-500/20">+ Nova Ficha</button>
             </div>
 
             <div id="controles-treino" class="hidden">
-                <!-- TABS DE FICHAS -->
                 <div id="ficha-tabs-container" class="flex flex-wrap gap-2 mb-6 p-2 bg-slate-900/40 rounded-2xl border border-white/5"></div>
-                
                 <div class="glass-card overflow-hidden">
                     <div class="p-5 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
-                        <div class="flex items-center gap-3">
-                            <span class="text-[10px] font-black uppercase text-slate-500">Nome da Ficha:</span>
-                            <input type="text" id="input-nome-ficha" onchange="renomearFicha(this.value)" class="bg-transparent border-b border-emerald-500/30 focus:border-emerald-500 outline-none font-bold text-white px-1">
-                        </div>
-                        <span class="text-[10px] font-black uppercase text-emerald-500/50">Editável</span>
+                        <input type="text" id="input-nome-ficha" onchange="renomearFicha(this.value)" class="bg-transparent border-b border-emerald-500/30 font-bold text-white outline-none">
                     </div>
                     <table class="w-full">
                         <thead class="bg-white/5 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                            <tr>
-                                <th class="p-5 text-left">Exercício</th>
-                                <th class="p-5 text-center w-24">Séries</th>
-                                <th class="p-5 text-center w-24">Reps</th>
-                                <th class="p-5 text-center w-32">Carga</th>
-                                <th class="p-5 w-16"></th>
-                            </tr>
+                            <tr><th class="p-5 text-left">Exercício</th><th class="p-5 text-center w-24">Séries</th><th class="p-5 text-center w-24">Reps</th><th class="p-5 text-center w-32">Carga</th><th class="p-5 w-16"></th></tr>
                         </thead>
                         <tbody id="treino-body" class="divide-y divide-white/5"></tbody>
                     </table>
-                    <div class="p-5 border-t border-white/5 bg-white/[0.01]">
-                        <button onclick="addExercicio()" class="text-emerald-500 font-bold text-sm hover:opacity-80 transition-all">+ Adicionar Exercício</button>
-                    </div>
+                    <div class="p-5 border-t border-white/5"><button onclick="addExercicio()" class="text-emerald-500 font-bold text-sm">+ Adicionar Exercício</button></div>
                 </div>
             </div>
-            <div id="aviso-treino" class="glass-card p-20 text-center text-slate-500 italic">
-                Selecione um aluno para gerenciar suas planilhas de treino.
-            </div>
+            <div id="aviso-treino" class="glass-card p-20 text-center text-slate-500 italic">Selecione um aluno para gerenciar planilhas.</div>
         </section>
 
-        <!-- EVOLUÇÃO & ANAMNESE -->
+        <!-- EVOLUÇÃO -->
         <section id="metas" class="tab-content">
             <div class="flex flex-col md:flex-row items-start md:items-center gap-4 mb-8">
                 <h2 class="text-3xl font-black">Avaliação <span class="text-emerald-500">Física</span></h2>
                 <select id="evolucao-aluno-select" onchange="loadEvolucaoAluno()" class="input-premium bg-slate-900 font-bold text-emerald-500 max-w-xs"></select>
             </div>
-            
             <div id="controles-evolucao" class="hidden space-y-8">
-                <!-- COMPOSIÇÃO BÁSICA -->
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
                     <div class="glass-card p-6 border-b-2 border-emerald-500">
-                        <span class="section-title">Peso (kg)</span>
+                        <span class="text-[10px] font-black text-slate-500 uppercase">Peso (kg)</span>
                         <input type="text" id="ev-peso" oninput="saveEvolucao()" class="bg-transparent text-3xl font-black w-full outline-none" placeholder="00.0">
                     </div>
                     <div class="glass-card p-6 border-b-2 border-blue-500">
-                        <span class="section-title">Altura (m)</span>
+                        <span class="text-[10px] font-black text-slate-500 uppercase">Altura (m)</span>
                         <input type="text" id="ev-altura" oninput="saveEvolucao()" class="bg-transparent text-3xl font-black w-full outline-none" placeholder="0.00">
                     </div>
                     <div class="glass-card p-6 border-b-2 border-purple-500">
-                        <span class="section-title">% Gordura Est.</span>
+                        <span class="text-[10px] font-black text-slate-500 uppercase">% Gordura Est.</span>
                         <input type="text" id="ev-gordura" oninput="saveEvolucao()" class="bg-transparent text-3xl font-black text-emerald-500 w-full outline-none" placeholder="0%">
                     </div>
                     <div class="glass-card p-6 border-b-2 border-amber-500">
-                        <span class="section-title">IMC</span>
+                        <span class="text-[10px] font-black text-slate-500 uppercase">IMC</span>
                         <div id="ev-imc" class="text-3xl font-black">--</div>
                     </div>
                 </div>
-
-                <!-- PERÍMETROS (MEDIDAS) -->
-                <div class="glass-card p-8">
-                    <span class="section-title">Perímetros (cm)</span>
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
-                        <div><label class="text-[10px] text-slate-500 font-bold">Peitoral</label><input oninput="saveEvolucao()" id="p-peito" class="input-premium mt-1"></div>
-                        <div><label class="text-[10px] text-slate-500 font-bold">Cintura</label><input oninput="saveEvolucao()" id="p-cintura" class="input-premium mt-1"></div>
-                        <div><label class="text-[10px] text-slate-500 font-bold">Abdominal</label><input oninput="saveEvolucao()" id="p-abs" class="input-premium mt-1"></div>
-                        <div><label class="text-[10px] text-slate-500 font-bold">Quadril</label><input oninput="saveEvolucao()" id="p-quadril" class="input-premium mt-1"></div>
-                        <div><label class="text-[10px] text-slate-500 font-bold">Braço (E/D)</label><input oninput="saveEvolucao()" id="p-braco" class="input-premium mt-1" placeholder="30 / 30"></div>
-                        <div><label class="text-[10px] text-slate-500 font-bold">Coxa (E/D)</label><input oninput="saveEvolucao()" id="p-coxa" class="input-premium mt-1" placeholder="55 / 55"></div>
-                        <div><label class="text-[10px] text-slate-500 font-bold">Pant. (E/D)</label><input oninput="saveEvolucao()" id="p-pant" class="input-premium mt-1"></div>
-                        <div><label class="text-[10px] text-slate-500 font-bold">Ombro</label><input oninput="saveEvolucao()" id="p-ombro" class="input-premium mt-1"></div>
-                    </div>
-                </div>
-
-                <!-- ANAMNESE E SAÚDE -->
-                <div class="glass-card p-8 bg-emerald-500/[0.02]">
-                    <span class="section-title text-emerald-500">Anamnese / Condições Clínicas</span>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        <div>
-                            <label class="text-[10px] text-slate-500 font-bold">Lesões / Restrições Médicas</label>
-                            <textarea oninput="saveEvolucao()" id="a-lesoes" class="input-premium mt-2 h-24 bg-slate-900/80 resize-none" placeholder="Ex: Condromalácia..."></textarea>
-                        </div>
-                        <div>
-                            <label class="text-[10px] text-slate-500 font-bold">Medicamentos / Patologias</label>
-                            <textarea oninput="saveEvolucao()" id="a-saude" class="input-premium mt-2 h-24 bg-slate-900/80 resize-none" placeholder="Ex: Hipertensão..."></textarea>
-                        </div>
-                        <div>
-                            <label class="text-[10px] text-slate-500 font-bold">Objetivo Principal</label>
-                            <input oninput="saveEvolucao()" id="a-objetivo" class="input-premium mt-2" placeholder="Ex: Hipertrofia máxima">
-                        </div>
-                        <div>
-                            <label class="text-[10px] text-slate-500 font-bold">Frequência Semanal</label>
-                            <select onchange="saveEvolucao()" id="a-frequencia" class="input-premium mt-2 bg-slate-900">
-                                <option>1x a 2x</option><option>3x (Padrão)</option><option>4x a 5x</option><option>Atleta</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
             </div>
-            <div id="aviso-evolucao" class="glass-card p-20 text-center text-slate-500 italic">
-                Selecione um aluno para carregar a ficha de avaliação.
-            </div>
+            <div id="aviso-evolucao" class="glass-card p-20 text-center text-slate-500 italic">Selecione um aluno para avaliação.</div>
         </section>
 
         <!-- DIÁRIO -->
         <section id="anotacoes" class="tab-content">
             <div class="flex flex-col md:flex-row items-start md:items-center gap-4 mb-8">
-                <h2 class="text-3xl font-black">Diário <span class="text-emerald-500">do Aluno</span></h2>
+                <h2 class="text-3xl font-black">Diário</h2>
                 <select id="diario-aluno-select" onchange="loadDiarioAluno()" class="input-premium bg-slate-900 font-bold text-emerald-500 max-w-xs"></select>
             </div>
             <div id="controles-diario" class="hidden">
-                <div class="glass-card p-8">
-                    <textarea id="diario-texto" oninput="saveDiarioAluno()" class="input-premium w-full h-96 bg-slate-900/50 resize-none text-lg p-6" placeholder="Feedback das aulas, cargas, comportamento..."></textarea>
-                </div>
+                <textarea id="diario-texto" oninput="saveDiarioAluno()" class="input-premium w-full h-96 bg-slate-900/50 resize-none text-lg p-6" placeholder="Feedback e notas..."></textarea>
             </div>
         </section>
 
@@ -304,20 +315,17 @@
         <section id="financeiro" class="tab-content">
             <div class="flex justify-between items-center mb-8">
                 <h2 class="text-3xl font-black">Financeiro</h2>
-                <div class="bg-emerald-500/10 border border-emerald-500/20 px-6 py-3 rounded-2xl">
-                    <span class="text-[10px] font-black uppercase text-slate-500 block">Receita Prevista</span>
-                    <div id="total-fin" class="text-2xl font-black text-emerald-500">R$ 0,00</div>
-                </div>
+                <div id="total-fin" class="text-2xl font-black text-emerald-500">R$ 0,00</div>
             </div>
             <div class="glass-card overflow-hidden"><table class="w-full"><tbody id="financeiro-body" class="divide-y divide-white/5"></tbody></table></div>
         </section>
 
     </main>
 
-    <!-- MODAL AGENDA -->
+    <!-- Modal Agenda -->
     <div id="modal-agenda" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center hidden">
         <div class="bg-slate-900 border border-white/10 p-8 rounded-[32px] w-[380px]">
-            <h3 class="text-xl font-bold mb-6 text-center text-white">Agendar Aluno</h3>
+            <h3 class="text-xl font-bold mb-6 text-center">Agendar Aluno</h3>
             <select id="select-agenda-aluno" class="input-premium w-full mb-6 bg-slate-800"></select>
             <div class="grid grid-cols-2 gap-3">
                 <button onclick="confirmarAddAgenda()" class="btn-gradient text-white py-3 rounded-xl font-bold">Confirmar</button>
@@ -327,68 +335,7 @@
     </div>
 
     <script>
-        // Cores disponíveis para os alunos
-        const colors = [
-            { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/30' },
-            { bg: 'bg-orange-500/20', text: 'text-orange-400', border: 'border-orange-500/30' },
-            { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/30' },
-            { bg: 'bg-yellow-500/20', text: 'text-yellow-400', border: 'border-yellow-500/30' },
-            { bg: 'bg-lime-500/20', text: 'text-lime-400', border: 'border-lime-500/30' },
-            { bg: 'bg-green-500/20', text: 'text-green-400', border: 'border-green-500/30' },
-            { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/30' },
-            { bg: 'bg-teal-500/20', text: 'text-teal-400', border: 'border-teal-500/30' },
-            { bg: 'bg-cyan-500/20', text: 'text-cyan-400', border: 'border-cyan-500/30' },
-            { bg: 'bg-sky-500/20', text: 'text-sky-400', border: 'border-sky-500/30' },
-            { bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/30' },
-            { bg: 'bg-indigo-500/20', text: 'text-indigo-400', border: 'border-indigo-500/30' },
-            { bg: 'bg-violet-500/20', text: 'text-violet-400', border: 'border-violet-500/30' },
-            { bg: 'bg-purple-500/20', text: 'text-purple-400', border: 'border-purple-500/30' },
-            { bg: 'bg-fuchsia-500/20', text: 'text-fuchsia-400', border: 'border-fuchsia-500/30' },
-            { bg: 'bg-pink-500/20', text: 'text-pink-400', border: 'border-pink-500/30' },
-            { bg: 'bg-rose-500/20', text: 'text-rose-400', border: 'border-rose-500/30' }
-        ];
-
-        const DB_KEY = 'personal_v25_colors';
-        let state = {
-            alunos: [],
-            agenda: [{hora:"07:00", dias:[[],[],[],[],[]]}, {hora:"08:00", dias:[[],[],[],[],[]]}, {hora:"09:00", dias:[[],[],[],[],[]]}],
-            treinos: {},
-            diarios: {},
-            evolucao: {}
-        };
-
         let currentFichaIdx = 0;
-
-        function init() {
-            const saved = localStorage.getItem(DB_KEY);
-            if(saved) state = JSON.parse(saved);
-
-            // Migração: Atribuir cores para alunos antigos que não têm
-            let updated = false;
-            if (state.alunos) {
-                state.alunos.forEach(a => {
-                    if (!a.cor) {
-                        a.cor = colors[Math.floor(Math.random() * colors.length)];
-                        updated = true;
-                    }
-                });
-            }
-            if (updated) save();
-
-            renderAgenda(); 
-            renderAlunos(); 
-            updateAllSelects();
-        }
-
-        function save() { localStorage.setItem(DB_KEY, JSON.stringify(state)); }
-
-        // NOVA FUNÇÃO DE SEGURANÇA: Dupla confirmação
-        function confirmacaoDupla(mensagem) {
-            if(confirm(mensagem)) {
-                return confirm("Tem certeza absoluta? Esta ação é irreversível e os dados serão perdidos.");
-            }
-            return false;
-        }
 
         function showTab(t) {
             document.querySelectorAll('.tab-content').forEach(x => x.classList.remove('active'));
@@ -401,11 +348,10 @@
             if(t === 'financeiro') renderFinanceiro();
         }
 
-        // AGENDA
         function renderAgenda() {
             const body = document.getElementById('agenda-body');
             if(!body) return;
-            body.innerHTML = state.agenda.map((h, hi) => `
+            body.innerHTML = window.state.agenda.map((h, hi) => `
                 <tr class="group">
                     <td class="p-5 text-center font-bold text-emerald-500 border-r border-white/5 relative">
                         <span class="cursor-pointer" onclick="editarHorario(${hi})">${h.hora}</span>
@@ -414,65 +360,44 @@
                     ${h.dias.map((d, di) => `
                         <td class="p-4 border-r border-white/5 align-top min-w-[140px]">
                             <div class="flex flex-wrap gap-1.5 mb-2">
-                                ${d.map((nome, ni) => {
-                                    const aluno = state.alunos.find(a => a.nome === nome);
-                                    const colorStyle = aluno ? aluno.cor : { bg: 'bg-gray-500/20', text: 'text-gray-400', border: 'border-gray-500/30' };
-                                    return `
-                                    <div class="aluno-badge ${colorStyle.bg} ${colorStyle.text} ${colorStyle.border}" onclick="removerAlunoAgenda(${hi}, ${di}, ${ni})">
+                                ${d.map((nome, ni) => `
+                                    <div class="aluno-badge bg-white/5 text-slate-300 border-white/10" onclick="removerAlunoAgenda(${hi}, ${di}, ${ni})">
                                         ${nome} <span class="opacity-40 ml-1">×</span>
                                     </div>
-                                `}).join('')}
+                                `).join('')}
                             </div>
-                            <button onclick="abrirModalAgenda(${hi}, ${di})" class="opacity-0 group-hover:opacity-100 text-[9px] font-black text-slate-600 hover:text-emerald-500 tracking-tighter transition-all">+ ADICIONAR</button>
+                            <button onclick="abrirModalAgenda(${hi}, ${di})" class="opacity-0 group-hover:opacity-100 text-[9px] font-black text-slate-600 hover:text-emerald-500">+ ADICIONAR</button>
                         </td>
                     `).join('')}
                 </tr>`).join('');
         }
 
-        function adicionarHorario() { const h = prompt("Horário (ex: 10:00):"); if(h) { state.agenda.push({hora: h, dias:[[],[],[],[],[]]}); state.agenda.sort((a,b)=>a.hora.localeCompare(b.hora)); save(); renderAgenda(); } }
-        function editarHorario(i) { const n = prompt("Novo horário:", state.agenda[i].hora); if(n){state.agenda[i].hora=n; save(); renderAgenda();}}
-        
-        function removerLinha(i) { 
-            if(confirmacaoDupla("Remover este horário da grade?")){
-                state.agenda.splice(i,1); save(); renderAgenda();
-            }
-        }
-        
-        function removerAlunoAgenda(hi,di,ni) { 
-            if(confirmacaoDupla("Remover este aluno deste horário específico?")){
-                state.agenda[hi].dias[di].splice(ni,1); save(); renderAgenda(); 
-            }
-        }
+        function adicionarHorario() { const h = prompt("Horário:"); if(h) { window.state.agenda.push({hora: h, dias:[[],[],[],[],[]]}); window.state.agenda.sort((a,b)=>a.hora.localeCompare(b.hora)); window.saveToCloud(); renderAgenda(); } }
+        function editarHorario(i) { const n = prompt("Novo horário:", window.state.agenda[i].hora); if(n){window.state.agenda[i].hora=n; window.saveToCloud(); renderAgenda();}}
+        function removerLinha(i) { if(confirm("Remover linha?")){ window.state.agenda.splice(i,1); window.saveToCloud(); renderAgenda(); } }
+        function removerAlunoAgenda(hi,di,ni) { if(confirm("Remover aluno do horário?")){ window.state.agenda[hi].dias[di].splice(ni,1); window.saveToCloud(); renderAgenda(); } }
         
         let curH, curD;
         function abrirModalAgenda(h,d) { curH=h; curD=d; document.getElementById('modal-agenda').classList.remove('hidden'); }
         function fecharModal() { document.getElementById('modal-agenda').classList.add('hidden'); }
         function confirmarAddAgenda() {
             const id = document.getElementById('select-agenda-aluno').value;
-            const al = state.alunos.find(a=>a.id===id);
-            if(al) { 
-                // Usando nome completo agora
-                state.agenda[curH].dias[curD].push(al.nome); 
-                save(); renderAgenda(); fecharModal(); 
-            }
+            const al = window.state.alunos.find(a=>a.id===id);
+            if(al) { window.state.agenda[curH].dias[curD].push(al.nome); window.saveToCloud(); renderAgenda(); fecharModal(); }
         }
 
-        // ALUNOS
         function renderAlunos() {
             const list = document.getElementById('alunos-list');
             if(!list) return;
-            list.innerHTML = state.alunos.map(a => `
+            list.innerHTML = window.state.alunos.map(a => `
                 <div class="glass-card p-6 border-l-4 border-emerald-500">
-                    <div class="flex flex-col md:flex-row justify-between gap-6">
-                        <div class="flex-1 grid grid-cols-1 md:grid-cols-4 gap-4">
-                            <div class="md:col-span-2">
-                                <label class="text-[9px] uppercase font-black text-slate-500 mb-1 block">Nome do Aluno</label>
-                                <input class="bg-transparent text-xl font-bold text-white outline-none w-full" value="${a.nome}" onchange="upAl('${a.id}','nome',this.value)">
-                            </div>
-                            <div><label class="text-[9px] uppercase font-black text-slate-500 mb-1 block">Mensalidade (R$)</label><input class="bg-transparent font-bold text-emerald-500 outline-none w-full" value="${a.mensalidade}" onchange="upAl('${a.id}','mensalidade',this.value)"></div>
-                            <div><label class="text-[9px] uppercase font-black text-slate-500 mb-1 block">Vencimento (Dia)</label><input class="bg-transparent font-bold text-white outline-none w-full" value="${a.vencimento}" onchange="upAl('${a.id}','vencimento',this.value)"></div>
+                    <div class="flex justify-between items-center">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1 mr-6">
+                            <input class="bg-transparent text-xl font-bold text-white outline-none" value="${a.nome}" onchange="upAl('${a.id}','nome',this.value)">
+                            <input class="bg-transparent font-bold text-emerald-500 outline-none" value="${a.mensalidade}" onchange="upAl('${a.id}','mensalidade',this.value)">
+                            <input class="bg-transparent font-bold text-white outline-none" value="${a.vencimento}" onchange="upAl('${a.id}','vencimento',this.value)">
                         </div>
-                        <button onclick="delAl('${a.id}')" class="text-red-500/40 hover:text-red-500 font-bold text-[10px] uppercase self-start">Remover</button>
+                        <button onclick="delAl('${a.id}')" class="text-red-500/40 hover:text-red-500 text-[10px] font-black uppercase">Excluir</button>
                     </div>
                 </div>`).join('');
         }
@@ -481,173 +406,111 @@
             const inp = document.getElementById('input-novo-aluno');
             if(!inp.value) return;
             const id = "AL-"+Date.now();
-            const randomColor = colors[Math.floor(Math.random() * colors.length)];
-            
-            state.alunos.push({
-                id, 
-                nome: inp.value, 
-                mensalidade: "250", 
-                vencimento: "05", 
-                cor: randomColor
-            });
-            state.treinos[id] = [{nome: "Treino A", exercicios: []}];
-            state.diarios[id] = "";
-            state.evolucao[id] = { peso: "", altura: "", gordura: "", peito: "", cintura: "", abs: "", quadril: "", braco: "", coxa: "", pant: "", ombro: "", lesoes: "", saude: "", objetivo: "", frequencia: "3x (Padrão)" };
-            inp.value=""; save(); renderAlunos(); updateAllSelects();
+            window.state.alunos.push({id, nome: inp.value, mensalidade: "250", vencimento: "05"});
+            window.state.treinos[id] = [{nome: "Treino A", exercicios: []}];
+            window.state.evolucao[id] = {peso:"", altura:"", gordura:""};
+            window.state.diarios[id] = "";
+            inp.value=""; window.saveToCloud(); renderAlunos(); updateAllSelects();
         }
 
-        function upAl(id,k,v) { 
-            const a=state.alunos.find(x=>x.id===id); 
-            if(a){
-                a[k]=v; 
-                save();
-                // Se mudar o nome, atualizamos a agenda se necessário (em um sistema real seria por ID, mas aqui simplificamos)
-                if (k === 'nome') renderAgenda();
-            }
-        }
-        
-        function delAl(id) { 
-            if(confirmacaoDupla("Excluir o aluno e TODOS os seus dados?")){
-                state.alunos=state.alunos.filter(x=>x.id!==id); 
-                delete state.treinos[id]; 
-                delete state.diarios[id]; 
-                delete state.evolucao[id]; 
-                save(); renderAlunos(); updateAllSelects();
-            }
-        }
+        function upAl(id,k,v) { const a=window.state.alunos.find(x=>x.id===id); if(a){a[k]=v; window.saveToCloud();}}
+        function delAl(id) { if(confirm("Apagar aluno permanentemente?")){ window.state.alunos=window.state.alunos.filter(x=>x.id!==id); window.saveToCloud(); renderAlunos(); updateAllSelects();}}
 
         function updateAllSelects() {
-            const opt = state.alunos.map(a=>`<option value="${a.id}">${a.nome}</option>`).join('');
+            const opt = window.state.alunos.map(a=>`<option value="${a.id}">${a.nome}</option>`).join('');
             ['treino-aluno-select', 'diario-aluno-select', 'evolucao-aluno-select', 'select-agenda-aluno'].forEach(sid => {
                 const el = document.getElementById(sid); if(el) el.innerHTML = opt || '<option disabled selected>Nenhum aluno</option>';
             });
         }
 
-        // TREINOS (FIXED & IMPROVED)
         function loadTreinoAluno() {
             const id = document.getElementById('treino-aluno-select').value;
-            if(!id || !state.treinos[id]) { 
-                document.getElementById('controles-treino').classList.add('hidden'); 
-                document.getElementById('aviso-treino').classList.remove('hidden'); 
-                return; 
-            }
+            if(!id || !window.state.treinos[id]) return;
             document.getElementById('controles-treino').classList.remove('hidden');
             document.getElementById('aviso-treino').classList.add('hidden');
             document.getElementById('btn-add-ficha').classList.remove('hidden');
-
-            const fichas = state.treinos[id];
-            if(currentFichaIdx >= fichas.length) currentFichaIdx = 0;
-
-            // Renderiza as Abas
+            
+            const fichas = window.state.treinos[id];
             document.getElementById('ficha-tabs-container').innerHTML = fichas.map((f,i) => `
-                <div onclick="changeFicha(${i})" class="ficha-tab ${i === currentFichaIdx ? 'active' : ''}">
-                    ${f.nome}
-                    ${fichas.length > 1 ? `<span onclick="event.stopPropagation(); delFicha(${i})" class="ml-1 opacity-40 hover:text-red-500">×</span>` : ''}
-                </div>
+                <div onclick="changeFicha(${i})" class="ficha-tab ${i === currentFichaIdx ? 'active' : ''}">${f.nome}</div>
             `).join('');
 
-            // Carrega o Nome da Ficha Atual para edição
-            document.getElementById('input-nome-ficha').value = fichas[currentFichaIdx].nome;
-
-            // Renderiza a tabela de exercícios
-            document.getElementById('treino-body').innerHTML = fichas[currentFichaIdx].exercicios.map((ex,ei)=>`
+            const f = fichas[currentFichaIdx];
+            document.getElementById('input-nome-ficha').value = f.nome;
+            document.getElementById('treino-body').innerHTML = f.exercicios.map((ex,ei)=>`
                 <tr>
-                    <td class="p-4"><input class="bg-transparent w-full text-white font-bold outline-none" value="${ex.n}" onchange="upEx('${id}',${currentFichaIdx},${ei},'n',this.value)"></td>
-                    <td class="p-4"><input class="bg-transparent text-center w-full outline-none" value="${ex.s}" onchange="upEx('${id}',${currentFichaIdx},${ei},'s',this.value)"></td>
-                    <td class="p-4"><input class="bg-transparent text-center w-full outline-none" value="${ex.r}" onchange="upEx('${id}',${currentFichaIdx},${ei},'r',this.value)"></td>
-                    <td class="p-4"><input class="bg-transparent text-center w-full text-emerald-500 font-bold outline-none" value="${ex.c}" onchange="upEx('${id}',${currentFichaIdx},${ei},'c',this.value)"></td>
-                    <td class="p-4 text-right"><button onclick="delEx('${id}',${currentFichaIdx},${ei})" class="text-red-500/30 hover:text-red-500">✕</button></td>
+                    <td class="p-4"><input class="bg-transparent w-full font-bold outline-none" value="${ex.n}" onchange="upEx('${id}',${ei},'n',this.value)"></td>
+                    <td class="p-4"><input class="bg-transparent text-center w-full outline-none" value="${ex.s}" onchange="upEx('${id}',${ei},'s',this.value)"></td>
+                    <td class="p-4"><input class="bg-transparent text-center w-full outline-none" value="${ex.r}" onchange="upEx('${id}',${ei},'r',this.value)"></td>
+                    <td class="p-4"><input class="bg-transparent text-center w-full text-emerald-500 font-bold outline-none" value="${ex.c}" onchange="upEx('${id}',${ei},'c',this.value)"></td>
+                    <td class="p-4 text-center"><button onclick="delEx('${id}',${ei})" class="text-red-500/20 hover:text-red-500">✕</button></td>
                 </tr>`).join('');
         }
 
-        function changeFicha(idx) {
-            currentFichaIdx = idx;
-            loadTreinoAluno();
-        }
-
-        function addNovaFicha() {
+        function renomearFicha(v) {
             const id = document.getElementById('treino-aluno-select').value;
-            const proximaLetra = String.fromCharCode(65 + state.treinos[id].length); // Gera B, C, D...
-            state.treinos[id].push({nome: "Treino " + proximaLetra, exercicios: []});
-            currentFichaIdx = state.treinos[id].length - 1;
-            save(); loadTreinoAluno();
+            if(id) { window.state.treinos[id][currentFichaIdx].nome = v; window.saveToCloud(); loadTreinoAluno(); }
         }
 
-        function renomearFicha(novoNome) {
-            const id = document.getElementById('treino-aluno-select').value;
-            if(id && state.treinos[id][currentFichaIdx]) {
-                state.treinos[id][currentFichaIdx].nome = novoNome;
-                save();
-                loadTreinoAluno(); // Atualiza as abas
-            }
-        }
+        function changeFicha(i) { currentFichaIdx = i; loadTreinoAluno(); }
+        function addNovaFicha() { const id=document.getElementById('treino-aluno-select').value; window.state.treinos[id].push({nome:"Novo Treino", exercicios:[]}); window.saveToCloud(); loadTreinoAluno(); }
+        function addExercicio() { const id=document.getElementById('treino-aluno-select').value; window.state.treinos[id][currentFichaIdx].exercicios.push({n:"Exercício",s:"3",r:"12",c:"0"}); window.saveToCloud(); loadTreinoAluno();}
+        function upEx(id,ei,k,v) { window.state.treinos[id][currentFichaIdx].exercicios[ei][k]=v; window.saveToCloud(); }
+        function delEx(id,ei) { window.state.treinos[id][currentFichaIdx].exercicios.splice(ei,1); window.saveToCloud(); loadTreinoAluno(); }
 
-        function delFicha(idx) {
-            const id = document.getElementById('treino-aluno-select').value;
-            if(confirmacaoDupla("Excluir esta ficha inteira?")) {
-                state.treinos[id].splice(idx, 1);
-                currentFichaIdx = 0;
-                save(); loadTreinoAluno();
-            }
-        }
-
-        function addExercicio() { const id=document.getElementById('treino-aluno-select').value; state.treinos[id][currentFichaIdx].exercicios.push({n:"Novo Exercício",s:"3",r:"12",c:"0"}); save(); loadTreinoAluno();}
-        function upEx(id,fi,ei,k,v) { state.treinos[id][fi].exercicios[ei][k]=v; save(); }
-        
-        function delEx(id,fi,ei) { 
-            if(confirmacaoDupla("Excluir este exercício?")) {
-                state.treinos[id][fi].exercicios.splice(ei,1); save(); loadTreinoAluno(); 
-            }
-        }
-
-        // EVOLUÇÃO
         function loadEvolucaoAluno() {
             const id = document.getElementById('evolucao-aluno-select').value;
-            if(!id || !state.evolucao[id]) { document.getElementById('controles-evolucao').classList.add('hidden'); document.getElementById('aviso-evolucao').classList.remove('hidden'); return; }
+            if(!id) return;
             document.getElementById('controles-evolucao').classList.remove('hidden');
             document.getElementById('aviso-evolucao').classList.add('hidden');
-            const ev = state.evolucao[id];
-            const fields = {'ev-peso': 'peso', 'ev-altura': 'altura', 'ev-gordura': 'gordura', 'p-peito': 'peito', 'p-cintura': 'cintura', 'p-abs': 'abs', 'p-quadril': 'quadril', 'p-braco': 'braco', 'p-coxa': 'coxa', 'p-pant': 'pant', 'p-ombro': 'ombro', 'a-lesoes': 'lesoes', 'a-saude': 'saude', 'a-objetivo': 'objetivo', 'a-frequencia': 'frequencia'};
-            Object.keys(fields).forEach(fid => { const el = document.getElementById(fid); if(el) el.value = ev[fields[fid]] || ""; });
+            const ev = window.state.evolucao[id] || {};
+            document.getElementById('ev-peso').value = ev.peso || "";
+            document.getElementById('ev-altura').value = ev.altura || "";
+            document.getElementById('ev-gordura').value = ev.gordura || "";
             calcIMC();
         }
 
         function calcIMC() {
             const p = parseFloat(document.getElementById('ev-peso').value);
             const a = parseFloat(document.getElementById('ev-altura').value);
-            const display = document.getElementById('ev-imc');
-            if(p && a) { const imc = (p / (a*a)).toFixed(1); display.innerText = imc; display.className = `text-3xl font-black ${imc > 25 ? 'text-amber-500' : 'text-emerald-500'}`; }
-            else display.innerText = "--";
+            const d = document.getElementById('ev-imc');
+            if(p && a) d.innerText = (p / (a*a)).toFixed(1); else d.innerText = "--";
         }
 
         function saveEvolucao() {
-            const id = document.getElementById('evolucao-aluno-select').value; if(!id) return;
-            const fields = {'ev-peso': 'peso', 'ev-altura': 'altura', 'ev-gordura': 'gordura', 'p-peito': 'peito', 'p-cintura': 'cintura', 'p-abs': 'abs', 'p-quadril': 'quadril', 'p-braco': 'braco', 'p-coxa': 'coxa', 'p-pant': 'pant', 'p-ombro': 'ombro', 'a-lesoes': 'lesoes', 'a-saude': 'saude', 'a-objetivo': 'objetivo', 'a-frequencia': 'frequencia'};
-            Object.keys(fields).forEach(fid => { state.evolucao[id][fields[fid]] = document.getElementById(fid).value; });
-            save(); calcIMC();
+            const id = document.getElementById('evolucao-aluno-select').value;
+            if(!id) return;
+            window.state.evolucao[id] = {
+                peso: document.getElementById('ev-peso').value,
+                altura: document.getElementById('ev-altura').value,
+                gordura: document.getElementById('ev-gordura').value
+            };
+            window.saveToCloud(); calcIMC();
         }
 
-        // DIÁRIO
         function loadDiarioAluno() {
             const id = document.getElementById('diario-aluno-select').value;
-            if(!id) return;
             document.getElementById('controles-diario').classList.toggle('hidden', !id);
-            document.getElementById('diario-texto').value = state.diarios[id] || "";
+            if(id) document.getElementById('diario-texto').value = window.state.diarios[id] || "";
         }
-        function saveDiarioAluno() { const id = document.getElementById('diario-aluno-select').value; if(id){state.diarios[id]=document.getElementById('diario-texto').value; save();}}
+        function saveDiarioAluno() {
+            const id = document.getElementById('diario-aluno-select').value;
+            if(!id) return;
+            window.state.diarios[id] = document.getElementById('diario-texto').value;
+            clearTimeout(window.saveTimer);
+            window.saveTimer = setTimeout(window.saveToCloud, 1000);
+        }
 
-        // FINANCEIRO
         function renderFinanceiro() {
             let total = 0;
             const body = document.getElementById('financeiro-body');
-            body.innerHTML = state.alunos.map(a=>{
+            if(!body) return;
+            body.innerHTML = window.state.alunos.map(a=>{
                 const v = parseFloat(a.mensalidade)||0; total+=v;
-                return `<tr><td class="p-5 font-bold">${a.nome}</td><td class="p-5 text-slate-500 text-xs text-center">Dia ${a.vencimento || '05'}</td><td class="p-5 text-right font-black text-emerald-500">R$ ${v.toFixed(2)}</td></tr>`;
+                return `<tr><td class="p-5 font-bold">${a.nome}</td><td class="p-5 text-center text-slate-500 text-xs">Dia ${a.vencimento}</td><td class="p-5 text-right font-black text-emerald-500">R$ ${v.toFixed(2)}</td></tr>`;
             }).join('');
-            document.getElementById('total-fin').innerText = `R$ ${total.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
+            document.getElementById('total-fin').innerText = `R$ ${total.toFixed(2)}`;
         }
-
-        window.onload = init;
     </script>
 </body>
 </html>
